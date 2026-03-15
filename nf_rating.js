@@ -10,8 +10,12 @@ const netflixTitleCacheKey = "NetflixTitleCacheKey";
 if (!$tool.isResponse) {
     let url = $request.url;
     const urlDecode = decodeURIComponent(url);
-    const videos = urlDecode.match(/"videos","(\d+)"/);
-    const videoID = videos[1];
+    const videos = urlDecode.match(/"videos",(?:"?(\d+)"?)/);
+    if (!videos) {
+        $done({});
+        return;
+    }
+    const videoID = String(videos[1]);
     const map = getTitleMap();
     const title = map[videoID];
     const isEnglish = url.match(/languages=en/) ? true : false;
@@ -30,8 +34,9 @@ if (!$tool.isResponse) {
     if (!IMDbApikey) updateIMDbApikey();
     let obj = JSON.parse($response.body);
     if (consoleLog) console.log("Netflix Original Body:\n" + $response.body);
-    if (typeof (obj.paths[0][1]) == "string") {
-        const videoID = obj.paths[0][1];
+    const pathVideoId = obj && obj.paths && obj.paths[0] ? obj.paths[0][1] : null;
+    if (typeof pathVideoId == "string" || typeof pathVideoId == "number") {
+        const videoID = String(pathVideoId);
         const video = obj.value.videos[videoID];
         const map = getTitleMap();
         let title = map[videoID];
@@ -68,7 +73,7 @@ if (!$tool.isResponse) {
             .finally(() => {
                 let summary = obj.value.videos[videoID].summary;
                 summary["supplementalMessage"] = `${msg}${summary && summary.supplementalMessage ? "\n" + summary.supplementalMessage : ""}`;
-                msg_obj = {"tagline":summary.supplementalMessage, "classification":"REGULAR"}
+                const msg_obj = {"tagline":summary.supplementalMessage, "classification":"REGULAR"}
                 if (summary["supplementalMessages"]) {
                     summary["supplementalMessages"].push(msg_obj)
                 }else {
@@ -113,7 +118,7 @@ function requestDoubanRating(imdbId) {
     });
 }
 
-function requestIMDbRating(title, year, type) {
+function requestIMDbRating(title, year, type, retried = false) {
     return new Promise(function (resolve, reject) {
         let url = "https://www.omdbapi.com/?t=" + encodeURI(title) + "&apikey=" + IMDbApikey;
         if (year) url += "&y=" + year;
@@ -132,9 +137,11 @@ function requestIMDbRating(title, year, type) {
                         reject(errorTip().noData);
                     }
                 } else if (response.status == 401) {
-                    if (IMDbApikeys.length > 1) {
+                    if (IMDbApikeys.length > 1 && !retried) {
                         updateIMDbApikey();
-                        requestIMDbRating(title, year, type);
+                        requestIMDbRating(title, year, type, true)
+                            .then(resolve)
+                            .catch(reject);
                     } else {
                         reject(errorTip().noData);
                     }
