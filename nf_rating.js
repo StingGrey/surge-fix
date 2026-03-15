@@ -44,6 +44,10 @@ if (!$tool.isResponse) {
             $done({});
             return;
         }
+    const pathVideoId = obj && obj.paths && obj.paths[0] ? obj.paths[0][1] : null;
+    if (typeof pathVideoId == "string" || typeof pathVideoId == "number") {
+        const videoID = String(pathVideoId);
+        const video = obj.value.videos[videoID];
         const map = getTitleMap();
         let title = map[videoID];
         if (!title) {
@@ -98,17 +102,17 @@ function getVideoIDFromResponse(obj) {
     if (obj && Array.isArray(obj.paths)) {
         for (let i = 0; i < obj.paths.length; i++) {
             const path = obj.paths[i];
-            if (!Array.isArray(path)) continue;
-            const first = path[0];
-            const second = path[1];
-            if (first == "videos" && (typeof second == "string" || typeof second == "number")) {
-                return String(second);
+            if (Array.isArray(path) && path[0] == "videos" && (typeof path[1] == "string" || typeof path[1] == "number")) {
+                return String(path[1]);
             }
         }
     }
+    if (obj && obj.value && obj.value.videos) {
+        const ids = Object.keys(obj.value.videos);
+        if (ids.length > 0) return String(ids[0]);
+    }
     return null;
 }
-
 
 function getTitleMap() {
     const map = $tool.read(netflixTitleCacheKey);
