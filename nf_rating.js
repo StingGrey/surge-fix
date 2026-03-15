@@ -49,6 +49,10 @@ function handleRequest() {
     if (!url.includes(detailsPath)) {
         url += `&${detailsPath}`;
     }
+    const detailsPath = `&path=${encodeURIComponent(`[${videos[0]},"details"]`)}`;
+    if (!url.includes(detailsPath)) {
+        url += detailsPath;
+    }
     $done({ url });
 }
 
@@ -62,29 +66,26 @@ function handleResponse() {
     }
     if (consoleLog) console.log("Netflix Original Body:\n" + $response.body);
     const videoID = getVideoIDFromResponse(obj);
-    if (!videoID) {
-        $done({});
-        return;
-    }
-    const video = obj && obj.value && obj.value.videos ? obj.value.videos[videoID] : null;
-    if (!video || !video.summary) {
-        $done({});
-        return;
-    }
-    const map = getTitleMap();
-    let title = map[videoID];
-    if (!title) {
-        title = video.summary.title;
-        setTitleMap(videoID, title, map);
-    }
-    let year = null;
-    let type = video.summary.type;
-    if (type == "show") {
-        type = "series";
-    }
-    if (video.details) {
-        if (type == "movie") {
-            year = video.details.releaseYear;
+    if (videoID) {
+        const video = obj && obj.value && obj.value.videos ? obj.value.videos[videoID] : null;
+        if (!video || !video.summary) {
+            $done({});
+            return;
+        }
+    const pathVideoId = obj && obj.paths && obj.paths[0] ? obj.paths[0][1] : null;
+    if (typeof pathVideoId == "string" || typeof pathVideoId == "number") {
+        const videoID = String(pathVideoId);
+        const video = obj.value.videos[videoID];
+        const map = getTitleMap();
+        let title = map[videoID];
+        if (!title) {
+            title = video.summary.title;
+            setTitleMap(videoID, title, map);
+        }
+        let year = null;
+        let type = video.summary.type;
+        if (type == "show") {
+            type = "series";
         }
         delete video.details;
     }
@@ -129,11 +130,57 @@ function getVideoIDFromResponse(obj) {
             if (first == "videos" && (typeof second == "string" || typeof second == "number")) {
                 return String(second);
             }
+            delete video.details;
         }
+        const requestRatings = async () => {
+            const IMDb = await requestIMDbRating(title, year, type);
+            const imdbId = IMDb && IMDb.id ? IMDb.id : "";
+            const Douban = imdbId ? await requestDoubanRating(imdbId) : { rating: "Douban:  ⭐️ N/A" };
+            const IMDbrating = IMDb.msg.rating;
+            const tomatoes = IMDb.msg.tomatoes;
+            const country = IMDb.msg.country;
+            const awards = IMDb.msg.awards;
+            const doubanRating = Douban.rating;
+            const message = `${awards.length > 0 ? awards + "\n": ""}${country}\n${IMDbrating}\n${doubanRating}${tomatoes.length > 0 ? "\n" + tomatoes + "\n" : "\n"}`;
+            return message;
+        }
+        let msg = "";
+        requestRatings()
+            .then(message => msg = message)
+            .catch(error => msg = error + "\n")
+            .finally(() => {
+                let summary = obj.value.videos[videoID].summary;
+                summary["supplementalMessage"] = `${msg}${summary && summary.supplementalMessage ? "\n" + summary.supplementalMessage : ""}`;
+                const msg_obj = {"tagline":summary.supplementalMessage, "classification":"REGULAR"}
+                if (summary["supplementalMessages"]) {
+                    summary["supplementalMessages"].push(msg_obj)
+                }else {
+                    summary["supplementalMessages"] = [msg_obj]
+                }
+                if (consoleLog) console.log("Netflix Modified Body:\n" + JSON.stringify(obj));
+                $done({ body: JSON.stringify(obj) });
+            });
+    } else {
+        $done({});
     }
     return null;
 }
 
+function getVideoIDFromResponse(obj) {
+    if (obj && Array.isArray(obj.paths)) {
+        for (let i = 0; i < obj.paths.length; i++) {
+            const path = obj.paths[i];
+            if (Array.isArray(path) && path[0] == "videos" && (typeof path[1] == "string" || typeof path[1] == "number")) {
+                return String(path[1]);
+            }
+        }
+    }
+    if (obj && obj.value && obj.value.videos) {
+        const ids = Object.keys(obj.value.videos);
+        if (ids.length > 0) return String(ids[0]);
+    }
+    return null;
+}
 
 function getTitleMap() {
     const map = $tool.read(netflixTitleCacheKey);
