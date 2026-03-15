@@ -20,7 +20,7 @@ if (!$tool.isResponse) {
     const title = map[videoID];
     const isEnglish = url.match(/languages=en/) ? true : false;
     if (!title && !isEnglish) {
-        const currentSummary = urlDecode.match(/\["videos","(\d+)","current","summary"\]/);
+        const currentSummary = urlDecode.match(/\["videos",(?:"?(\d+)"?),"current","summary"\]/);
         if (currentSummary) {
             url = url.replace("&path=" + encodeURIComponent(currentSummary[0]), "");
         }
@@ -34,6 +34,13 @@ if (!$tool.isResponse) {
     if (!IMDbApikey) updateIMDbApikey();
     let obj = JSON.parse($response.body);
     if (consoleLog) console.log("Netflix Original Body:\n" + $response.body);
+    const videoID = getVideoIDFromResponse(obj);
+    if (videoID) {
+        const video = obj && obj.value && obj.value.videos ? obj.value.videos[videoID] : null;
+        if (!video || !video.summary) {
+            $done({});
+            return;
+        }
     const pathVideoId = obj && obj.paths && obj.paths[0] ? obj.paths[0][1] : null;
     if (typeof pathVideoId == "string" || typeof pathVideoId == "number") {
         const videoID = String(pathVideoId);
@@ -85,6 +92,22 @@ if (!$tool.isResponse) {
     } else {
         $done({});
     }
+}
+
+function getVideoIDFromResponse(obj) {
+    if (obj && Array.isArray(obj.paths)) {
+        for (let i = 0; i < obj.paths.length; i++) {
+            const path = obj.paths[i];
+            if (Array.isArray(path) && path[0] == "videos" && (typeof path[1] == "string" || typeof path[1] == "number")) {
+                return String(path[1]);
+            }
+        }
+    }
+    if (obj && obj.value && obj.value.videos) {
+        const ids = Object.keys(obj.value.videos);
+        if (ids.length > 0) return String(ids[0]);
+    }
+    return null;
 }
 
 function getTitleMap() {
