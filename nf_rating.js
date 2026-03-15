@@ -8,79 +8,132 @@ const imdbApikeyCacheKey = "ImdbApikeyCacheKey";
 const netflixTitleCacheKey = "NetflixTitleCacheKey";
 
 if (!$tool.isResponse) {
-    let url = $request.url;
-    const urlDecode = decodeURIComponent(url);
-    const videos = urlDecode.match(/"videos","(\d+)"/);
-    const videoID = videos[1];
-    const map = getTitleMap();
-    const title = map[videoID];
-    const isEnglish = url.match(/languages=en/) ? true : false;
-    if (!title && !isEnglish) {
-        const currentSummary = urlDecode.match(/\["videos","(\d+)","current","summary"\]/);
-        if (currentSummary) {
-            url = url.replace("&path=" + encodeURIComponent(currentSummary[0]), "");
-        }
-        url = url.replace(/&languages=(.*?)&/, "&languages=en-US&");
+    try {
+        handleRequest();
+    } catch (e) {
+        if (consoleLog) console.log("Netflix Request Hook Error:\n" + e);
+        $done({});
     }
-    url += "&path=" + encodeURIComponent(`[${videos[0]},"details"]`);
-    $done({ url });
 } else {
     var IMDbApikeys = IMDbApikeys();
     var IMDbApikey = $tool.read(imdbApikeyCacheKey);
     if (!IMDbApikey) updateIMDbApikey();
-    let obj = JSON.parse($response.body);
-    if (consoleLog) console.log("Netflix Original Body:\n" + $response.body);
-    if (typeof (obj.paths[0][1]) == "string") {
-        const videoID = obj.paths[0][1];
-        const video = obj.value.videos[videoID];
-        const map = getTitleMap();
-        let title = map[videoID];
-        if (!title) {
-            title = video.summary.title;
-            setTitleMap(videoID, title, map);
-        }
-        let year = null;
-        let type = video.summary.type;
-        if (type == "show") {
-            type = "series";
-        }
-        if (video.details) {
-            if (type == "movie") {
-                year = video.details.releaseYear;
-            }
-            delete video.details;
-        }
-        const requestRatings = async () => {
-            const IMDb = await requestIMDbRating(title, year, type);
-            const Douban = await requestDoubanRating(IMDb.id);
-            const IMDbrating = IMDb.msg.rating;
-            const tomatoes = IMDb.msg.tomatoes;
-            const country = IMDb.msg.country;
-            const awards = IMDb.msg.awards;
-            const doubanRating = Douban.rating;
-            const message = `${awards.length > 0 ? awards + "\n": ""}${country}\n${IMDbrating}\n${doubanRating}${tomatoes.length > 0 ? "\n" + tomatoes + "\n" : "\n"}`;
-            return message;
-        }
-        let msg = "";
-        requestRatings()
-            .then(message => msg = message)
-            .catch(error => msg = error + "\n")
-            .finally(() => {
-                let summary = obj.value.videos[videoID].summary;
-                summary["supplementalMessage"] = `${msg}${summary && summary.supplementalMessage ? "\n" + summary.supplementalMessage : ""}`;
-                msg_obj = {"tagline":summary.supplementalMessage, "classification":"REGULAR"}
-                if (summary["supplementalMessages"]) {
-                    summary["supplementalMessages"].push(msg_obj)
-                }else {
-                    summary["supplementalMessages"] = [msg_obj]
-                }
-                if (consoleLog) console.log("Netflix Modified Body:\n" + JSON.stringify(obj));
-                $done({ body: JSON.stringify(obj) });
-            });
-    } else {
+    try {
+        handleResponse();
+    } catch (e) {
+        if (consoleLog) console.log("Netflix Response Hook Error:\n" + e);
         $done({});
     }
 }
+
+function handleRequest() {
+    let url = $request.url;
+    const urlDecode = decodeURIComponent(url);
+    const videos = urlDecode.match(/"videos",(?:"?(\d+)"?)/);
+    if (!videos) {
+        $done({});
+        return;
+    }
+    const videoID = String(videos[1]);
+    const map = getTitleMap();
+    const title = map[videoID];
+    const isEnglish = /[?&]languages=en/i.test(url);
+    if (!title && !isEnglish) {
+        const currentSummary = urlDecode.match(/\["videos",(?:"?(\d+)"?),"current","summary"\]/);
+        if (currentSummary) {
+            url = url.replace("&path=" + encodeURIComponent(currentSummary[0]), "");
+        }
+        url = url.replace(/([?&])languages=[^&]*/i, "$1languages=en-US");
+    }
+    const detailsPath = `path=${encodeURIComponent(`[${videos[0]},"details"]`)}`;
+    if (!url.includes(detailsPath)) {
+        url += `&${detailsPath}`;
+    }
+    $done({ url });
+}
+
+function handleResponse() {
+    let obj = null;
+    try {
+        obj = JSON.parse($response.body);
+    } catch (e) {
+        $done({});
+        return;
+    }
+    if (consoleLog) console.log("Netflix Original Body:\n" + $response.body);
+    const videoID = getVideoIDFromResponse(obj);
+    if (!videoID) {
+        $done({});
+        return;
+    }
+    const video = obj && obj.value && obj.value.videos ? obj.value.videos[videoID] : null;
+    if (!video || !video.summary) {
+        $done({});
+        return;
+    }
+    const map = getTitleMap();
+    let title = map[videoID];
+    if (!title) {
+        title = video.summary.title;
+        setTitleMap(videoID, title, map);
+    }
+    let year = null;
+    let type = video.summary.type;
+    if (type == "show") {
+        type = "series";
+    }
+    if (video.details) {
+        if (type == "movie") {
+            year = video.details.releaseYear;
+        }
+        delete video.details;
+    }
+    const requestRatings = async () => {
+        const IMDb = await requestIMDbRating(title, year, type);
+        const imdbId = IMDb && IMDb.id ? IMDb.id : "";
+        const Douban = imdbId ? await requestDoubanRating(imdbId) : { rating: "Douban:  ⭐️ N/A" };
+        const IMDbrating = IMDb.msg.rating;
+        const tomatoes = IMDb.msg.tomatoes;
+        const country = IMDb.msg.country;
+        const awards = IMDb.msg.awards;
+        const doubanRating = Douban.rating;
+        const message = `${awards.length > 0 ? awards + "\n": ""}${country}\n${IMDbrating}\n${doubanRating}${tomatoes.length > 0 ? "\n" + tomatoes + "\n" : "\n"}`;
+        return message;
+    }
+    let msg = "";
+    requestRatings()
+        .then(message => msg = message)
+        .catch(error => msg = error + "\n")
+        .finally(() => {
+            let summary = obj.value.videos[videoID].summary;
+            summary["supplementalMessage"] = `${msg}${summary && summary.supplementalMessage ? "\n" + summary.supplementalMessage : ""}`;
+            const msg_obj = {"tagline":summary.supplementalMessage, "classification":"REGULAR"}
+            if (summary["supplementalMessages"]) {
+                summary["supplementalMessages"].push(msg_obj)
+            }else {
+                summary["supplementalMessages"] = [msg_obj]
+            }
+            if (consoleLog) console.log("Netflix Modified Body:\n" + JSON.stringify(obj));
+            $done({ body: JSON.stringify(obj) });
+        });
+}
+
+
+function getVideoIDFromResponse(obj) {
+    if (obj && Array.isArray(obj.paths)) {
+        for (let i = 0; i < obj.paths.length; i++) {
+            const path = obj.paths[i];
+            if (!Array.isArray(path)) continue;
+            const first = path[0];
+            const second = path[1];
+            if (first == "videos" && (typeof second == "string" || typeof second == "number")) {
+                return String(second);
+            }
+        }
+    }
+    return null;
+}
+
 
 function getTitleMap() {
     const map = $tool.read(netflixTitleCacheKey);
@@ -113,7 +166,7 @@ function requestDoubanRating(imdbId) {
     });
 }
 
-function requestIMDbRating(title, year, type) {
+function requestIMDbRating(title, year, type, retried = false) {
     return new Promise(function (resolve, reject) {
         let url = "https://www.omdbapi.com/?t=" + encodeURI(title) + "&apikey=" + IMDbApikey;
         if (year) url += "&y=" + year;
@@ -132,9 +185,11 @@ function requestIMDbRating(title, year, type) {
                         reject(errorTip().noData);
                     }
                 } else if (response.status == 401) {
-                    if (IMDbApikeys.length > 1) {
+                    if (IMDbApikeys.length > 1 && !retried) {
                         updateIMDbApikey();
-                        requestIMDbRating(title, year, type);
+                        requestIMDbRating(title, year, type, true)
+                            .then(resolve)
+                            .catch(reject);
                     } else {
                         reject(errorTip().noData);
                     }
