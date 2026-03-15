@@ -41,6 +41,10 @@ if (!$tool.isResponse) {
             $done({});
             return;
         }
+    const pathVideoId = obj && obj.paths && obj.paths[0] ? obj.paths[0][1] : null;
+    if (typeof pathVideoId == "string" || typeof pathVideoId == "number") {
+        const videoID = String(pathVideoId);
+        const video = obj.value.videos[videoID];
         const map = getTitleMap();
         let title = map[videoID];
         if (!title) {
