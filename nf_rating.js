@@ -26,7 +26,10 @@ if (!$tool.isResponse) {
         }
         url = url.replace(/&languages=(.*?)&/, "&languages=en-US&");
     }
-    url += "&path=" + encodeURIComponent(`[${videos[0]},"details"]`);
+    const detailsPath = `&path=${encodeURIComponent(`[${videos[0]},"details"]`)}`;
+    if (!url.includes(detailsPath)) {
+        url += detailsPath;
+    }
     $done({ url });
 } else {
     var IMDbApikeys = IMDbApikeys();
@@ -64,7 +67,8 @@ if (!$tool.isResponse) {
         }
         const requestRatings = async () => {
             const IMDb = await requestIMDbRating(title, year, type);
-            const Douban = await requestDoubanRating(IMDb.id);
+            const imdbId = IMDb && IMDb.id ? IMDb.id : "";
+            const Douban = imdbId ? await requestDoubanRating(imdbId) : { rating: "Douban:  ⭐️ N/A" };
             const IMDbrating = IMDb.msg.rating;
             const tomatoes = IMDb.msg.tomatoes;
             const country = IMDb.msg.country;
